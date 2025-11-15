@@ -6,13 +6,13 @@ import javax.swing.border.LineBorder;
 import java.awt.*;
 
 public class LoginFrame extends JFrame {
+    private final Client client;
 
     private JTextField nicknameField;
     private JButton loginButton;
-    private Main mainApp; // Main 클래스 참조
 
-    public LoginFrame(Main mainApp) {
-        this.mainApp = mainApp;
+    public LoginFrame(Client client) {
+        this.client = client;
 
         // --- 1. 기본 창 설정 ---
         setTitle("겜톡");
@@ -59,8 +59,8 @@ public class LoginFrame extends JFrame {
         mainPanel.add(loginButton, gbc);
 
         // --- 6. 이벤트 리스너 추가 ---
-        loginButton.addActionListener(e -> performLogin());
-        nicknameField.addActionListener(e -> performLogin()); // 엔터키로도 로그인
+        loginButton.addActionListener(_ -> onSubmit());
+        nicknameField.addActionListener(_ -> onSubmit()); // 엔터키로도 로그인
 
         // 플레이스홀더 기능 (FocusListener)
         nicknameField.addFocusListener(new java.awt.event.FocusAdapter() {
@@ -80,15 +80,15 @@ public class LoginFrame extends JFrame {
 
         add(mainPanel, BorderLayout.CENTER);
     }
-    private void performLogin() {
-        String nickname = nicknameField.getText();
+
+    private void onSubmit() {
+        String nickname = nicknameField.getText().trim();
         if (nickname.isEmpty() || nickname.equals("닉네임을 입력하세요")) {
             JOptionPane.showMessageDialog(this, "닉네임을 입력해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        
-        // [핵심] Main 클래스의 로그인 시도 메소드를 호출
-        mainApp.attemptLogin(nickname);
+
+        this.client.attemptLogin(nickname);
     }
 }
 
