@@ -13,6 +13,10 @@ public class Client {
     private PrintWriter out;
     private BufferedReader in;
 
+    private String nickname;
+    private MainFrame mainFrame;
+
+
     private final LoginFrame loginFrame;
 
     public Client() {
@@ -39,7 +43,10 @@ public class Client {
 
                 if("LOGIN_SUCCESS".equalsIgnoreCase(response)) {
                     SwingUtilities.invokeLater(() -> {
-                        System.out.println("로그인 성공 처리");
+                        this.nickname = nickname;
+                        //loginFrame.setVisible(false);
+                        this.mainFrame = new MainFrame(nickname);
+
                     });
                 } else{
                     JOptionPane.showMessageDialog(loginFrame, response, "로그인 실패", JOptionPane.ERROR_MESSAGE);

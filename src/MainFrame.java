@@ -8,6 +8,8 @@ import javax.swing.event.DocumentListener;
 import java.awt.*;
 
 public class MainFrame extends JFrame {
+	private final String nickname;
+
 
 	private JPanel userListPanel;
 	private JPanel userListHeaderPanel;
@@ -20,7 +22,9 @@ public class MainFrame extends JFrame {
 	private PlaceholderTextArea messageArea;
 	private JButton sendButton;
 
-	public MainFrame() {
+	public MainFrame(String nickname) {
+		this.nickname = nickname;
+
 		setTitle("겜톡");
 		// ▼▼▼ [수정] 실제 카톡과 유사한 창 크기 설정 ▼▼▼
 		setSize(620, 750);
@@ -82,7 +86,10 @@ public class MainFrame extends JFrame {
 	        userListContentPanel.revalidate();
 	        userListContentPanel.repaint();
 	    }
-	
+	private void createChatHeader() {
+		JPanel chatHeader = new JPanel(new BorderLayout());
+
+	}
 
 	private void createChatPanel() {
 		chatPanel = new JPanel(new BorderLayout());
@@ -305,10 +312,8 @@ public class MainFrame extends JFrame {
             sendButton.setEnabled(false);
         }
     }
+
+	public static void main(String[] args) {
+		SwingUtilities.invokeLater(() -> new MainFrame("테스트"));
+	}
 }
-/*
- * public static void main(String[] args) { 이전과 동일 try {
- * UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch
- * (Exception e) { e.printStackTrace(); } SwingUtilities.invokeLater(() -> new
- * MainFrame()); } }
- */
