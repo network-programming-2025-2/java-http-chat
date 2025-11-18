@@ -51,7 +51,6 @@ public class Server {
         } else {
             users.put(nickname, handler);
 
-            System.out.println(users);
             return true;
         }
     }
