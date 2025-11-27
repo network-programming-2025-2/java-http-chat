@@ -13,6 +13,7 @@ public class Main {
         this.client = new Client(this);
         this.loginFrame = new LoginFrame(this);
         loginFrame.setVisible(true);
+        System.out.println("sadsadsad");
     }
 
     public void attemptLogin(String nickname) {
