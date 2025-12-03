@@ -9,6 +9,9 @@ public class Main {
     private Client client;
     private Map<String, List<ChatMessage>> chatHistories = new HashMap<>();
 
+    // 🔥 온라인 유저 목록 관리 (오목 상대 선택용)
+    private Set<String> onlineUsers = new LinkedHashSet<>();
+
     public Main() {
         this.client = new Client(this);
         this.loginFrame = new LoginFrame(this);
@@ -96,11 +99,32 @@ public class Main {
                     } catch (NumberFormatException ignored) {}
                     break;
 
-                case "USER_LIST":
-                case "NEW_USER":
-                case "EXIT_USER":
+                case "USER_LIST": {
+                    // 🔥 온라인 유저 목록 갱신
+                    onlineUsers.clear();
+                    if (!data.isEmpty()) {
+                        for (String user : data.split(",")) {
+                            String u = user.trim();
+                            if (!u.isEmpty()) onlineUsers.add(u);
+                        }
+                    }
                     mainFrame.processServerMessage(message);
                     break;
+                }
+
+                case "NEW_USER": {
+                    String u = data.trim();
+                    if (!u.isEmpty()) onlineUsers.add(u);
+                    mainFrame.processServerMessage(message);
+                    break;
+                }
+
+                case "EXIT_USER": {
+                    String u = data.trim();
+                    if (!u.isEmpty()) onlineUsers.remove(u);
+                    mainFrame.processServerMessage(message);
+                    break;
+                }
 
                 case "PUBLIC_MSG":
                     String[] msgP = data.split("::", 2);
@@ -149,6 +173,26 @@ public class Main {
                     );
                     System.exit(0);
                     break;
+                case "OMOK_COLOR":
+                    // data: "BLACK" or "WHITE"
+                    mainFrame.getGamePanel().setOmokPlayerColor("BLACK".equals(data));
+                    break;
+
+                case "OMOK_MOVE":
+                    // data: "x,y,B" 또는 "x,y,W"
+                    String[] mv = data.split(",");
+                    int mx = Integer.parseInt(mv[0]);
+                    int my = Integer.parseInt(mv[1]);
+                    boolean isBlack = "B".equals(mv[2]);
+                    mainFrame.getGamePanel().applyOmokMove(mx, my, isBlack);
+                    break;
+
+                case "OMOK_TURN":
+                    // data: 턴인 사람 닉네임
+                    boolean myTurn = data.equals(myNickname);
+                    mainFrame.getGamePanel().setOmokTurn(myTurn);
+                    break;
+
             }
         });
     }
@@ -180,6 +224,11 @@ public class Main {
 
     public Client getClient() { return client; }
     public String getMyNickname() { return myNickname; }
+
+    // 🔥 온라인 유저 리스트 제공 (상대 선택 다이얼로그에서 사용)
+    public java.util.List<String> getOnlineUsers() {
+        return new ArrayList<>(onlineUsers);
+    }
 
     public static void main(String[] args) {
         try {
