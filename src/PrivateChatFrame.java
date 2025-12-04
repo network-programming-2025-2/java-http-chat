@@ -8,6 +8,9 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Clipboard;
+
 
 public class PrivateChatFrame extends JFrame {
     private Main mainApp;
@@ -96,6 +99,9 @@ public class PrivateChatFrame extends JFrame {
         SwingUtilities.invokeLater(() ->
                 chatScrollPane.getVerticalScrollBar()
                         .setValue(chatScrollPane.getVerticalScrollBar().getMaximum()));
+        // 우클릭 팝업 연결
+        attachPopupToMessage(bubble, wrapperPanel, msg.getMessage());
+
     }
 
     private JPanel createChatPanel() {
@@ -210,6 +216,38 @@ public class PrivateChatFrame extends JFrame {
 
         return controlPanel;
     }
+
+    // 메시지 우클릭 팝업 (복사 / 삭제)
+    private void attachPopupToMessage(JComponent target, JPanel wrapperPanel, String text) {
+        JPopupMenu popup = new JPopupMenu();
+
+        JMenuItem copyItem = new JMenuItem("복사");
+        copyItem.addActionListener(e -> {
+            Clipboard cb = Toolkit.getDefaultToolkit().getSystemClipboard();
+            cb.setContents(new StringSelection(text), null);
+        });
+
+        JMenuItem deleteItem = new JMenuItem("삭제");
+        deleteItem.addActionListener(e -> {
+            chatDisplayContainer.remove(wrapperPanel);
+            chatDisplayContainer.revalidate();
+            chatDisplayContainer.repaint();
+        });
+
+        popup.add(copyItem);
+        popup.add(deleteItem);
+
+        target.addMouseListener(new java.awt.event.MouseAdapter() {
+            private void showPopup(java.awt.event.MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    popup.show(e.getComponent(), e.getX(), e.getY());
+                }
+            }
+            @Override public void mousePressed(java.awt.event.MouseEvent e) { showPopup(e); }
+            @Override public void mouseReleased(java.awt.event.MouseEvent e) { showPopup(e); }
+        });
+    }
+
 
     private void updateSendButtonState(boolean active) {
         sendButton.setEnabled(active);

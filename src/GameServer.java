@@ -17,28 +17,29 @@ public class GameServer {
     private static int currentPlayerIndex = -1;
     private static StringBuilder gameHistory = new StringBuilder();
 
-    // 숫자 야구
+    // 숫자야구
     private static NumberBaseballGame currentBaseballGame;
 
     // 끝말잇기
     private static String lastWord = null;
     private static Set<String> usedWords = new HashSet<>();
 
-    // 업다운
-    private static int updownAnswer = -1;
-
-    // 오목
-    private static final int OMOK_SIZE = 15;
-    private static int[][] omokBoard = new int[OMOK_SIZE][OMOK_SIZE];
-    private static String omokBlack = null;
-    private static String omokWhite = null;
-    private static String omokTurn = null; // 현재 턴인 유저 닉네임
-
-    // 타이머 (주로 끝말잇기용)
+    // 타이머 (끝말잇기용)
     private static final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor();
     private static ScheduledFuture<?> turnTimeoutTask = null;
     private static ScheduledFuture<?> timerBroadcastTask = null;
+
+    // 업다운
+    private static int upDownAnswer = -1;
+    private static boolean upDownInProgress = false;
+
+    // 오목
+    private static final int OMOK_SIZE = 15;
+    private static int[][] omokBoard = new int[OMOK_SIZE][OMOK_SIZE];
+    private static String omokBlackPlayer = null;
+    private static String omokWhitePlayer = null;
+    private static boolean omokBlackTurn = true;
 
     private static String encodeHistory(String s) {
         return s.replace("\n", "\\n");
@@ -57,138 +58,143 @@ public class GameServer {
         }
     }
 
-    // ================= 게임 생성 =================
-
+    // ==========================
+    // 게임 생성
+    // ==========================
     public static synchronized void createGame(String gameType, String creator) {
         if (currentGameType != GameType.NONE) {
             sendToOne(creator, "GAME_INFO::이미 진행 중인 게임이 있습니다.");
             return;
         }
 
+        if (clients.isEmpty()) {
+            sendToOne(creator, "GAME_INFO::접속 중인 사용자가 없습니다.");
+            return;
+        }
+
         gameParticipants.clear();
-        gameHistory.setLength(0);
-
         gameParticipants.addAll(clients.keySet());
-        if (gameParticipants.size() < 2 && "OMOK".equals(gameType)) {
-            sendToOne(creator, "GAME_INFO::오목은 2명 이상이어야 합니다.");
-            return;
-        }
-        if (gameParticipants.isEmpty()) {
-            sendToOne(creator, "GAME_INFO::참여할 유저가 없습니다.");
-            return;
-        }
-
-        Collections.shuffle(gameParticipants);
+        gameHistory.setLength(0);
         currentPlayerIndex = -1;
 
-        if ("NUMBER_BASEBALL".equals(gameType)) {
-            currentGameType = GameType.NUMBER_BASEBALL;
-            currentBaseballGame = new NumberBaseballGame();
-            lastWord = null;
-            usedWords.clear();
-            updownAnswer = -1;
-            gameHistory.append("--- 숫자 야구 게임 시작 ---\n");
-            broadcast("GAME_START_SUCCESS::NUMBER_BASEBALL");
-            broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
-            nextTurn();
+        cancelTurnTimeout();
+        lastWord = null;
+        usedWords.clear();
+        currentBaseballGame = null;
+        upDownInProgress = false;
+        omokBlackPlayer = null;
+        omokWhitePlayer = null;
 
-        } else if ("WORD_CHAIN".equals(gameType)) {
-            currentGameType = GameType.WORD_CHAIN;
-            currentBaseballGame = null;
-            lastWord = null;
-            usedWords.clear();
-            updownAnswer = -1;
-            gameHistory.append("--- 끝말잇기 게임 시작 ---\n");
-            broadcast("GAME_START_SUCCESS::WORD_CHAIN");
-            broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
-            nextTurn();
+        switch (gameType) {
+            case "NUMBER_BASEBALL":
+                currentGameType = GameType.NUMBER_BASEBALL;
+                currentBaseballGame = new NumberBaseballGame();
+                Collections.shuffle(gameParticipants);
+                gameHistory.append("--- 숫자 야구 게임 시작 ---\n");
+                broadcast("GAME_START_SUCCESS::NUMBER_BASEBALL");
+                broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
+                nextTurn(); // 턴 게임
+                break;
 
-        } else if ("UPDOWN".equals(gameType)) {
-            currentGameType = GameType.UPDOWN;
-            currentBaseballGame = null;
-            lastWord = null;
-            usedWords.clear();
-            updownAnswer = new Random().nextInt(100) + 1;
-            System.out.println("[서버] 업다운 정답: " + updownAnswer);
-            gameHistory.append("--- 업다운 게임 시작 ---\n");
-            broadcast("GAME_START_SUCCESS::UPDOWN");
-            broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
-            nextTurn();
+            case "WORD_CHAIN":
+                currentGameType = GameType.WORD_CHAIN;
+                Collections.shuffle(gameParticipants);
+                gameHistory.append("--- 끝말잇기 게임 시작 ---\n");
+                broadcast("GAME_START_SUCCESS::WORD_CHAIN");
+                broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
+                nextTurn(); // 턴 게임 + 타이머
+                break;
 
-        } else if ("OMOK".equals(gameType)) {
-            currentGameType = GameType.OMOK;
-            currentBaseballGame = null;
-            lastWord = null;
-            usedWords.clear();
-            updownAnswer = -1;
+            case "UPDOWN":
+                currentGameType = GameType.UPDOWN;
+                upDownAnswer = new Random().nextInt(100) + 1;
+                upDownInProgress = true;
+                gameHistory.append("--- 업다운 게임 시작 (1~100) ---\n");
+                broadcast("GAME_START_SUCCESS::UPDOWN");
+                broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
+                broadcast("GAME_INFO::업다운 게임이 시작되었습니다. 1~100 사이의 정수를 입력하세요.");
+                break;
 
-            // 참가자 2명만 선택 (생성자 + 그 외 한 명)
-            omokBlack = creator;
-            omokWhite = null;
-            for (String nick : gameParticipants) {
-                if (!nick.equals(creator)) {
-                    omokWhite = nick;
-                    break;
+            case "OMOK":
+                if (clients.size() < 2) {
+                    sendToOne(creator, "GAME_INFO::오목은 최소 2명이 필요합니다.");
+                    return;
                 }
-            }
-            if (omokWhite == null) {
-                sendToOne(creator, "GAME_INFO::상대가 없습니다. (2명 이상 필요)");
-                currentGameType = GameType.NONE;
-                return;
-            }
-            gameParticipants.clear();
-            gameParticipants.add(omokBlack);
-            gameParticipants.add(omokWhite);
+                currentGameType = GameType.OMOK;
 
-            omokBoard = new int[OMOK_SIZE][OMOK_SIZE];
-            omokTurn = omokBlack;
+                gameParticipants.clear();
+                gameParticipants.addAll(clients.keySet());
+                Collections.shuffle(gameParticipants);
+                omokBlackPlayer = gameParticipants.get(0);
+                omokWhitePlayer = gameParticipants.get(1);
+                omokBlackTurn = true;
 
-            gameHistory.append("--- 오목 게임 시작 ---\n");
-            gameHistory.append("흑(●): ").append(omokBlack)
-                    .append(" / 백(○): ").append(omokWhite).append("\n");
+                for (int r = 0; r < OMOK_SIZE; r++) {
+                    Arrays.fill(omokBoard[r], 0);
+                }
 
-            broadcast("GAME_START_SUCCESS::OMOK");
-            broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
+                gameHistory.append("--- 오목 게임 시작 ---\n")
+                        .append("흑: ").append(omokBlackPlayer)
+                        .append(", 백: ").append(omokWhitePlayer).append("\n");
 
-            sendToOne(omokBlack, "OMOK_COLOR::BLACK");
-            sendToOne(omokWhite, "OMOK_COLOR::WHITE");
+                broadcast("GAME_START_SUCCESS::OMOK");
+                broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
+                broadcast("GAME_INFO::오목 게임 시작! 흑: " + omokBlackPlayer
+                        + ", 백: " + omokWhitePlayer + " / 흑부터 시작합니다.");
+                sendToOne(omokBlackPlayer, "OMOK_ROLE::BLACK");
+                sendToOne(omokWhitePlayer, "OMOK_ROLE::WHITE");
+                break;
 
-            broadcast("GAME_INFO::" + omokTurn + "님의 차례입니다. (흑 ● 좌표를 입력하세요. 예) 7,7)");
-            broadcast("OMOK_TURN::" + omokTurn);
-            cancelTurnTimeout(); // 오목은 타이머 X
-
-        } else {
-            sendToOne(creator, "GAME_INFO::알 수 없는 게임 타입입니다.");
+            default:
+                sendToOne(creator, "GAME_INFO::알 수 없는 게임 타입입니다.");
         }
     }
 
-    // ================= 공통 액션 처리 =================
-
+    // ==========================
+    // 공통 액션 처리 (텍스트형 게임)
+    // ==========================
     public static synchronized void handleGameAction(String player, String action) {
-        if (currentGameType == GameType.NONE || gameParticipants.isEmpty()) return;
+        if (currentGameType == GameType.NONE) return;
 
-        if (currentGameType == GameType.OMOK) {
-            handleOmokAction(player, action);
-            return;
-        }
+        switch (currentGameType) {
+            case UPDOWN:
+                handleUpDownAction(player, action);
+                break;
 
-        // 턴 체크 (오목 제외)
-        if (currentPlayerIndex < 0 ||
-                !gameParticipants.get(currentPlayerIndex).equals(player)) {
-            sendToOne(player, "GAME_INFO::당신의 턴이 아닙니다.");
-            return;
-        }
+            case NUMBER_BASEBALL:
+                if (!isPlayersTurn(player)) {
+                    sendToOne(player, "GAME_INFO::당신의 턴이 아닙니다.");
+                    return;
+                }
+                handleBaseballAction(player, action);
+                break;
 
-        if (currentGameType == GameType.NUMBER_BASEBALL) {
-            handleBaseballAction(player, action);
-        } else if (currentGameType == GameType.WORD_CHAIN) {
-            handleWordChainAction(player, action);
-        } else if (currentGameType == GameType.UPDOWN) {
-            handleUpdownAction(player, action);
+            case WORD_CHAIN:
+                if (!isPlayersTurn(player)) {
+                    sendToOne(player, "GAME_INFO::당신의 턴이 아닙니다.");
+                    return;
+                }
+                handleWordChainAction(player, action);
+                break;
+
+            default:
+                // OMOK은 별도 프로토콜(OMOK_MOVE) 사용
+                break;
         }
     }
 
-    // ===== 숫자야구 =====
+    private static boolean isPlayersTurn(String player) {
+        if (gameParticipants.isEmpty() ||
+                currentPlayerIndex < 0 ||
+                currentPlayerIndex >= gameParticipants.size()) {
+            return false;
+        }
+        return gameParticipants.get(currentPlayerIndex).equals(player);
+    }
+
+    // ==========================
+    // 숫자야구 처리
+    // ==========================
     private static void handleBaseballAction(String player, String guess) {
         if (currentBaseballGame == null) return;
 
@@ -198,9 +204,9 @@ public class GameServer {
         broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
 
         if (result.contains("4S")) {
-            broadcast("GAME_INFO::" + player + "님이 정답(" +
-                    currentBaseballGame.getAnswerString() + ")을 맞췄습니다!");
-            broadcast("GAME_END::숫자야구 - 승자: " + player);
+            broadcast("GAME_INFO::" + player + "님이 정답("
+                    + currentBaseballGame.getAnswerString() + ")을 맞췄습니다!");
+            broadcast("GAME_END::숫자야구 승자: " + player);
             currentBaseballGame = null;
             currentGameType = GameType.NONE;
             cancelTurnTimeout();
@@ -209,7 +215,9 @@ public class GameServer {
         }
     }
 
-    // ===== 끝말잇기 =====
+    // ==========================
+    // 끝말잇기 처리
+    // ==========================
     private static void handleWordChainAction(String player, String word) {
         word = word.trim();
 
@@ -246,123 +254,166 @@ public class GameServer {
         nextTurn();
     }
 
-    // ===== 업다운 =====
-    private static void handleUpdownAction(String player, String guessStr) {
+    // ==========================
+    // 업다운 처리
+    // ==========================
+    private static void handleUpDownAction(String player, String guessText) {
+        if (!upDownInProgress) {
+            sendToOne(player, "GAME_INFO::현재 진행 중인 업다운 게임이 없습니다.");
+            return;
+        }
+
         int guess;
         try {
-            guess = Integer.parseInt(guessStr.trim());
+            guess = Integer.parseInt(guessText.trim());
         } catch (NumberFormatException e) {
-            sendToOne(player, "GAME_INFO::숫자를 입력하세요.");
+            sendToOne(player, "GAME_INFO::정수를 입력하세요.");
             return;
         }
 
         if (guess < 1 || guess > 100) {
-            sendToOne(player, "GAME_INFO::1~100 사이의 숫자를 입력하세요.");
+            sendToOne(player, "GAME_INFO::1~100 사이의 숫자만 입력 가능합니다.");
             return;
         }
 
         String result;
-        if (guess < updownAnswer) result = "UP";
-        else if (guess > updownAnswer) result = "DOWN";
-        else result = "CORRECT";
+        if (guess < upDownAnswer) result = "UP";
+        else if (guess > upDownAnswer) result = "DOWN";
+        else result = "정답";
 
         gameHistory.append(player).append(" -> ").append(guess)
                 .append(" : ").append(result).append("\n");
         broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
 
-        if ("CORRECT".equals(result)) {
-            broadcast("GAME_INFO::" + player + "님이 업다운 정답(" + updownAnswer + ")을 맞췄습니다!");
-            broadcast("GAME_END::업다운 - 승자: " + player);
+        if ("정답".equals(result)) {
+            broadcast("GAME_INFO::" + player + "님이 업다운 정답(" + upDownAnswer + ")을 맞췄습니다!");
+            broadcast("GAME_END::UPDOWN 승자: " + player);
+            upDownInProgress = false;
             currentGameType = GameType.NONE;
-            updownAnswer = -1;
-            cancelTurnTimeout();
-        } else {
-            nextTurn();
         }
     }
 
-    // ===== 오목 =====
-    private static void handleOmokAction(String player, String action) {
-        if (omokBlack == null || omokWhite == null) return;
-        if (!player.equals(omokTurn)) {
+    // ==========================
+    // 오목 처리
+    // ==========================
+    public static synchronized void handleOmokMove(String player, String coordText) {
+        if (currentGameType != GameType.OMOK) {
+            sendToOne(player, "GAME_INFO::현재 오목 게임이 진행 중이 아닙니다.");
+            return;
+        }
+
+        if (!player.equals(omokBlackPlayer) && !player.equals(omokWhitePlayer)) {
+            sendToOne(player, "GAME_INFO::관전자라 돌을 둘 수 없습니다.");
+            return;
+        }
+
+        boolean isBlackTurnNow = omokBlackTurn;
+        String expectedPlayer = isBlackTurnNow ? omokBlackPlayer : omokWhitePlayer;
+        if (!player.equals(expectedPlayer)) {
             sendToOne(player, "GAME_INFO::당신의 턴이 아닙니다.");
             return;
         }
 
-        String[] p = action.split(",");
-        if (p.length != 2) {
-            sendToOne(player, "GAME_INFO::좌표 형식은 x,y 입니다. 예) 7,7");
+        String[] rc = coordText.split(",");
+        if (rc.length != 2) {
+            sendToOne(player, "GAME_INFO::잘못된 좌표 형식입니다.");
             return;
         }
 
-        int x, y;
+        int row, col;
         try {
-            x = Integer.parseInt(p[0].trim());
-            y = Integer.parseInt(p[1].trim());
+            row = Integer.parseInt(rc[0]);
+            col = Integer.parseInt(rc[1]);
         } catch (NumberFormatException e) {
-            sendToOne(player, "GAME_INFO::좌표는 숫자로 입력해야 합니다. 예) 7,7");
+            sendToOne(player, "GAME_INFO::좌표는 숫자여야 합니다.");
             return;
         }
 
-        if (x < 0 || x >= OMOK_SIZE || y < 0 || y >= OMOK_SIZE) {
-            sendToOne(player, "GAME_INFO::좌표는 0~14 범위입니다.");
+        if (row < 0 || row >= OMOK_SIZE || col < 0 || col >= OMOK_SIZE) {
+            sendToOne(player, "GAME_INFO::보드 밖입니다.");
             return;
         }
 
-        if (omokBoard[y][x] != 0) {
+        if (omokBoard[row][col] != 0) {
             sendToOne(player, "GAME_INFO::이미 돌이 놓인 자리입니다.");
             return;
         }
 
-        int color = player.equals(omokBlack) ? 1 : 2;
-        omokBoard[y][x] = color;
+        int stone = isBlackTurnNow ? 1 : 2;
+        omokBoard[row][col] = stone;
+        String colorText = isBlackTurnNow ? "BLACK" : "WHITE";
 
-        String colorStr = (color == 1 ? "B" : "W");
-        broadcast("OMOK_MOVE::" + x + "," + y + "," + colorStr);
+        broadcast("OMOK_MOVE_APPLIED::" + row + "," + col + "::" + colorText + "::" + player);
 
         gameHistory.append(player)
-                .append(color == 1 ? " (●)" : " (○)")
-                .append(" -> (")
-                .append(x).append(",").append(y).append(")\n");
+                .append(" (").append(isBlackTurnNow ? "흑" : "백").append(")")
+                .append(" -> (").append(row + 1).append(",").append(col + 1).append(")\n");
         broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
 
-        if (checkOmokWin(x, y, color)) {
-            broadcast("GAME_INFO::" + player + "님이 5목을 완성했습니다!");
-            broadcast("GAME_END::오목 - 승자: " + player);
+        if (checkOmokWin(row, col, stone)) {
+            broadcast("GAME_INFO::" + player + "님이 오목을 완성했습니다!");
+            broadcast("GAME_END::OMOK 승자: " + player);
             currentGameType = GameType.NONE;
-            omokBlack = null;
-            omokWhite = null;
-            omokTurn = null;
             return;
         }
 
-        // 턴 변경
-        omokTurn = player.equals(omokBlack) ? omokWhite : omokBlack;
-        broadcast("OMOK_TURN::" + omokTurn);
-        broadcast("GAME_INFO::" + omokTurn + "님의 차례입니다.");
+        omokBlackTurn = !omokBlackTurn;
+        String nextPlayer = omokBlackTurn ? omokBlackPlayer : omokWhitePlayer;
+        broadcast("GAME_INFO::" + nextPlayer + "님의 차례입니다.");
     }
 
-    private static boolean checkOmokWin(int x, int y, int color) {
-        return (countLine(x, y, 1, 0, color) + countLine(x, y, -1, 0, color) >= 4) ||
-                (countLine(x, y, 0, 1, color) + countLine(x, y, 0, -1, color) >= 4) ||
-                (countLine(x, y, 1, 1, color) + countLine(x, y, -1, -1, color) >= 4) ||
-                (countLine(x, y, 1, -1, color) + countLine(x, y, -1, 1, color) >= 4);
-    }
+    private static boolean checkOmokWin(int r, int c, int stone) {
+        int[][] dirs = { {1,0}, {0,1}, {1,1}, {1,-1} };
 
-    private static int countLine(int x, int y, int dx, int dy, int color) {
-        int cnt = 0;
-        for (int i = 1; i < 5; i++) {
-            int nx = x + dx * i;
-            int ny = y + dy * i;
-            if (nx < 0 || ny < 0 || nx >= OMOK_SIZE || ny >= OMOK_SIZE) break;
-            if (omokBoard[ny][nx] != color) break;
-            cnt++;
+        for (int[] d : dirs) {
+            int dr = d[0], dc = d[1];
+            int count = 1;
+
+            // 한쪽 방향
+            int nr = r + dr;
+            int nc = c + dc;
+            while (nr >= 0 && nr < OMOK_SIZE && nc >= 0 && nc < OMOK_SIZE
+                    && omokBoard[nr][nc] == stone) {
+                count++;
+                nr += dr;
+                nc += dc;
+            }
+
+            // 반대 방향
+            nr = r - dr;
+            nc = c - dc;
+            while (nr >= 0 && nr < OMOK_SIZE && nc >= 0 && nc < OMOK_SIZE
+                    && omokBoard[nr][nc] == stone) {
+                count++;
+                nr -= dr;
+                nc -= dc;
+            }
+
+            if (count >= 5) return true;
         }
-        return cnt;
+
+        return false;
     }
 
-    // ================= 타이머 (끝말잇기용) =================
+    // ==========================
+    // 정답 공개 (숫자야구)
+    // ==========================
+    public static synchronized void revealAnswer(String requester) {
+        if (currentGameType != GameType.NUMBER_BASEBALL || currentBaseballGame == null) {
+            sendToOne(requester, "GAME_INFO::숫자 야구 진행 중일 때만 정답 확인이 가능합니다.");
+            return;
+        }
+        String answer = currentBaseballGame.getAnswerString();
+        broadcast("GAME_REVEAL::" + answer + "::" + requester);
+        broadcast("GAME_END::숫자야구 정답 공개");
+        currentBaseballGame = null;
+        currentGameType = GameType.NONE;
+        cancelTurnTimeout();
+    }
 
+    // ==========================
+    // 타이머 관련 (끝말잇기용)
+    // ==========================
     private static void scheduleTurnTimeout(String player) {
         cancelTurnTimeout();
 
@@ -397,7 +448,7 @@ public class GameServer {
         broadcast("GAME_BOARD_UPDATE::" + encodeHistory(gameHistory.toString()));
 
         broadcast("GAME_INFO::" + player + "님이 10초 안에 단어를 입력하지 않아 GAME OVER!");
-        broadcast("GAME_END::끝말잇기 - 시간초과(" + player + ")");
+        broadcast("GAME_END::시간초과(" + player + ")");
 
         currentGameType = GameType.NONE;
         currentBaseballGame = null;
@@ -406,11 +457,13 @@ public class GameServer {
         cancelTurnTimeout();
     }
 
-    // ================= 턴 처리 =================
-
+    // ==========================
+    // 턴 처리 (숫자야구 / 끝말잇기 전용)
+    // ==========================
     private static void nextTurn() {
-        if (currentGameType == GameType.OMOK) {
-            // 오목은 handleOmokAction에서 턴 처리
+        if (currentGameType != GameType.NUMBER_BASEBALL &&
+                currentGameType != GameType.WORD_CHAIN) {
+            cancelTurnTimeout();
             return;
         }
 
@@ -441,25 +494,27 @@ public class GameServer {
             }
             broadcast("GAME_INFO::" + infoMsg);
             scheduleTurnTimeout(nextPlayer);
-        } else if (currentGameType == GameType.UPDOWN) {
-            infoMsg = nextPlayer + "님의 차례입니다. (1~100 숫자 입력)";
-            broadcast("GAME_INFO::" + infoMsg);
-            cancelTurnTimeout();
-        } else {
-            infoMsg = "현재 진행 중인 게임이 없습니다.";
-            broadcast("GAME_INFO::" + infoMsg);
-            cancelTurnTimeout();
         }
     }
 
-    // ================= 유저 퇴장 =================
-
+    // ==========================
+    // 플레이어 퇴장
+    // ==========================
     public static synchronized void playerLeft(String nickname) {
         clients.remove(nickname);
         broadcast("EXIT_USER::" + nickname);
         System.out.println("[서버] " + nickname + " 님이 나갔습니다.");
 
+        // 오목 플레이어가 나가면 게임 종료
+        if (currentGameType == GameType.OMOK &&
+                (nickname.equals(omokBlackPlayer) || nickname.equals(omokWhitePlayer))) {
+            broadcast("GAME_INFO::" + nickname + "님이 오목 게임을 떠나 게임이 종료됩니다.");
+            broadcast("GAME_END::오목 중단");
+            currentGameType = GameType.NONE;
+        }
+
         if (currentGameType == GameType.NONE) return;
+
         if (!gameParticipants.contains(nickname)) return;
 
         boolean wasCurrentPlayer =
@@ -477,15 +532,17 @@ public class GameServer {
             lastWord = null;
             usedWords.clear();
             cancelTurnTimeout();
-        } else if (wasCurrentPlayer && currentGameType != GameType.OMOK) {
+        } else if (wasCurrentPlayer &&
+                (currentGameType == GameType.NUMBER_BASEBALL ||
+                        currentGameType == GameType.WORD_CHAIN)) {
             currentPlayerIndex %= gameParticipants.size();
             nextTurn();
         }
     }
 
-
-    // ================= 공통 유틸 =================
-
+    // ==========================
+    // 공통 유틸
+    // ==========================
     public static void broadcast(String message) {
         System.out.println("[서버 방송] " + message);
         clients.values().forEach(c -> c.sendMessage(message));
@@ -513,30 +570,11 @@ public class GameServer {
     public static String getUserList() {
         return String.join(",", clients.keySet());
     }
-    // 숫자야구 정답 공개
-    public static synchronized void revealAnswer(String requester) {
-        // 숫자야구 중이 아니면 막기
-        if (currentGameType != GameType.NUMBER_BASEBALL || currentBaseballGame == null) {
-            sendToOne(requester, "GAME_INFO::숫자 야구 진행 중일 때만 정답 확인이 가능합니다.");
-            return;
-        }
-
-        String answer = currentBaseballGame.getAnswerString();
-
-        // 모든 클라이언트에게 정답 전파
-        broadcast("GAME_REVEAL::" + answer + "::" + requester);
-        broadcast("GAME_END::정답 공개");
-
-        // 게임 상태 초기화
-        currentBaseballGame = null;
-        currentGameType = GameType.NONE;
-        cancelTurnTimeout();
-    }
-
 }
 
-// ================== 클라이언트 핸들러 ==================
-
+// ==========================
+// 클라이언트 핸들러
+// ==========================
 class ClientHandler implements Runnable {
     private Socket socket;
     private PrintWriter out;
@@ -583,10 +621,13 @@ class ClientHandler implements Runnable {
                     } else if (message.startsWith("GAME_CREATE_REQUEST::")) {
                         GameServer.createGame(message.split("::")[1], nickname);
                     } else if (message.startsWith("GAME_ACTION::")) {
-                        GameServer.handleGameAction(
-                                nickname, message.split("::")[1]);
+                        String action = message.split("::", 2)[1];
+                        GameServer.handleGameAction(nickname, action);
                     } else if (message.startsWith("GAME_REVEAL_REQUEST::")) {
                         GameServer.revealAnswer(nickname);
+                    } else if (message.startsWith("OMOK_MOVE::")) {
+                        String coord = message.substring("OMOK_MOVE::".length());
+                        GameServer.handleOmokMove(nickname, coord);
                     }
                 }
             }

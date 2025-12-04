@@ -1,6 +1,11 @@
 import javax.swing.*;
 import java.util.*;
 
+import javax.swing.*;
+import java.util.*;
+
+
+
 public class Main {
     private String myNickname;
     private LoginFrame loginFrame;
@@ -9,14 +14,10 @@ public class Main {
     private Client client;
     private Map<String, List<ChatMessage>> chatHistories = new HashMap<>();
 
-    // 🔥 온라인 유저 목록 관리 (오목 상대 선택용)
-    private Set<String> onlineUsers = new LinkedHashSet<>();
-
     public Main() {
         this.client = new Client(this);
         this.loginFrame = new LoginFrame(this);
         loginFrame.setVisible(true);
-        System.out.println("sadsadsad");
     }
 
     public void attemptLogin(String nickname) {
@@ -51,14 +52,33 @@ public class Main {
                 case "GAME_START_SUCCESS":
                     mainFrame.showGame();
                     mainFrame.getGamePanel().setGameMode(data);
-                    mainFrame.getGamePanel().setInputEnabled(false);
+
+                    // 업다운은 시작부터 입력 가능, 나머지는 턴 안내에서 활성화
+                    if ("UPDOWN".equals(data)) {
+                        mainFrame.getGamePanel().setInputEnabled(true);
+                    } else {
+                        mainFrame.getGamePanel().setInputEnabled(false);
+                    }
                     break;
 
                 case "GAME_INFO":
                     mainFrame.getGamePanel().setInfoText(data);
-                    mainFrame.getGamePanel().setInputEnabled(
-                            data.contains(myNickname + "님의 차례입니다")
-                    );
+
+                    String type = mainFrame.getGamePanel().getCurrentGameType();
+                    if ("UPDOWN".equals(type)) {
+                        // 업다운은 항상 입력 가능
+                        mainFrame.getGamePanel().setInputEnabled(true);
+                    } else if ("NUMBER_BASEBALL".equals(type) ||
+                            "WORD_CHAIN".equals(type)) {
+                        // 턴 안내 문구에 따라 입력 허용
+                        boolean myTurn = data.contains(myNickname + "님의 차례입니다");
+                        mainFrame.getGamePanel().setInputEnabled(myTurn);
+                    } else if ("OMOK".equals(type)) {
+                        // 오목은 클릭만 사용 → 텍스트 입력 X
+                        mainFrame.getGamePanel().setInputEnabled(false);
+                    } else {
+                        mainFrame.getGamePanel().setInputEnabled(false);
+                    }
                     break;
 
                 case "GAME_BOARD_UPDATE":
@@ -77,7 +97,7 @@ public class Main {
                     mainFrame.showChat();
                     break;
 
-                case "GAME_REVEAL":
+                case "GAME_REVEAL": {
                     // 형식: GAME_REVEAL::정답::요청자
                     String[] r = data.split("::", 2);
                     String answer = r[0];
@@ -91,6 +111,7 @@ public class Main {
                     mainFrame.getGamePanel().setInfoText("정답: " + answer);
                     mainFrame.getGamePanel().setInputEnabled(false);
                     break;
+                }
 
                 case "GAME_TIMER":
                     try {
@@ -99,35 +120,35 @@ public class Main {
                     } catch (NumberFormatException ignored) {}
                     break;
 
-                case "USER_LIST": {
-                    // 🔥 온라인 유저 목록 갱신
-                    onlineUsers.clear();
-                    if (!data.isEmpty()) {
-                        for (String user : data.split(",")) {
-                            String u = user.trim();
-                            if (!u.isEmpty()) onlineUsers.add(u);
-                        }
+                case "OMOK_MOVE_APPLIED": {
+                    // 형식: OMOK_MOVE_APPLIED::row,col::BLACK/WHITE::player
+                    String[] p = data.split("::");
+                    if (p.length >= 3) {
+                        String[] rc = p[0].split(",");
+                        try {
+                            int row = Integer.parseInt(rc[0]);
+                            int col = Integer.parseInt(rc[1]);
+                            boolean isBlack = "BLACK".equals(p[1]);
+                            mainFrame.getGamePanel().applyOmokMove(row, col, isBlack);
+                        } catch (Exception ignored) {}
                     }
-                    mainFrame.processServerMessage(message);
                     break;
                 }
 
-                case "NEW_USER": {
-                    String u = data.trim();
-                    if (!u.isEmpty()) onlineUsers.add(u);
+                case "OMOK_ROLE":
+                    // data: BLACK / WHITE / 기타
+                    mainFrame.getGamePanel().setOmokRole(data);
+                    break;
+
+                case "USER_LIST":
+                case "NEW_USER":
+                case "EXIT_USER":
                     mainFrame.processServerMessage(message);
                     break;
-                }
 
-                case "EXIT_USER": {
-                    String u = data.trim();
-                    if (!u.isEmpty()) onlineUsers.remove(u);
-                    mainFrame.processServerMessage(message);
-                    break;
-                }
-
-                case "PUBLIC_MSG":
+                case "PUBLIC_MSG": {
                     String[] msgP = data.split("::", 2);
+                    if (msgP.length < 2) break;
                     ChatMessage pubMsg = new ChatMessage(
                             msgP[0],
                             msgP[1],
@@ -138,9 +159,11 @@ public class Main {
                             .add(pubMsg);
                     mainFrame.addChatMessage(pubMsg);
                     break;
+                }
 
-                case "PRIVATE_MSG":
+                case "PRIVATE_MSG": {
                     String[] pmP = data.split("::", 3);
+                    if (pmP.length < 3) break;
                     String sender = pmP[0];
                     String receiver = pmP[1];
                     String pm = pmP[2];
@@ -163,6 +186,7 @@ public class Main {
                         }
                     }
                     break;
+                }
 
                 case "SERVER_DOWN":
                     JOptionPane.showMessageDialog(
@@ -173,26 +197,6 @@ public class Main {
                     );
                     System.exit(0);
                     break;
-                case "OMOK_COLOR":
-                    // data: "BLACK" or "WHITE"
-                    mainFrame.getGamePanel().setOmokPlayerColor("BLACK".equals(data));
-                    break;
-
-                case "OMOK_MOVE":
-                    // data: "x,y,B" 또는 "x,y,W"
-                    String[] mv = data.split(",");
-                    int mx = Integer.parseInt(mv[0]);
-                    int my = Integer.parseInt(mv[1]);
-                    boolean isBlack = "B".equals(mv[2]);
-                    mainFrame.getGamePanel().applyOmokMove(mx, my, isBlack);
-                    break;
-
-                case "OMOK_TURN":
-                    // data: 턴인 사람 닉네임
-                    boolean myTurn = data.equals(myNickname);
-                    mainFrame.getGamePanel().setOmokTurn(myTurn);
-                    break;
-
             }
         });
     }
@@ -222,13 +226,14 @@ public class Main {
         );
     }
 
+    public List<String> getOnlineUsers() {
+        if (mainFrame == null) return Collections.emptyList();
+        return mainFrame.getOnlineUsers();
+    }
+
+
     public Client getClient() { return client; }
     public String getMyNickname() { return myNickname; }
-
-    // 🔥 온라인 유저 리스트 제공 (상대 선택 다이얼로그에서 사용)
-    public java.util.List<String> getOnlineUsers() {
-        return new ArrayList<>(onlineUsers);
-    }
 
     public static void main(String[] args) {
         try {

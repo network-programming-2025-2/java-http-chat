@@ -1,7 +1,18 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
-import java.awt.*;
+
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ArrayList;
+
 
 public class MainFrame extends JFrame {
     private Main mainApp;
@@ -10,6 +21,7 @@ public class MainFrame extends JFrame {
     private JPanel chatPanelContainer;
     private DefaultChatPanel defaultChatPanel;
     private GamePanel gamePanel;
+
 
     public MainFrame(Main mainApp) {
         this.mainApp = mainApp;
@@ -24,6 +36,17 @@ public class MainFrame extends JFrame {
         createChatPanelContainer();
         add(chatPanelContainer, BorderLayout.CENTER);
     }
+
+    public List<String> getOnlineUsers() {
+        List<String> users = new ArrayList<>();
+        for (Component comp : userListContentPanel.getComponents()) {
+            if (comp instanceof CustomUserButton) {
+                users.add(((CustomUserButton) comp).getNickname());
+            }
+        }
+        return users;
+    }
+
 
     private void createChatPanelContainer() {
         chatCardLayout = new CardLayout();
